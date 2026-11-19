@@ -1,0 +1,87 @@
+# ==========================================
+# CaminhoLivre - Azure Pipelines CI
+# Java 21 + Spring Boot + Maven + JUnit
+# ==========================================
+
+# Executar somente apos alteracoes na main
+trigger:
+  branches:
+    include:
+      - main
+
+# Nao executar CI automaticamente em PRs
+pr: none
+
+# Agente Linux hospedado pela Microsoft
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  javaVersion: '21'
+  artifactName: 'caminholivre-api'
+
+stages:
+  - stage: CI
+    displayName: 'Integracao Continua'
+
+    jobs:
+      - job: BuildAndTest
+        displayName: 'Compilar e testar API Java'
+
+        steps:
+          # 1. Baixar codigo do repositorio
+          - checkout: self
+            displayName: 'Checkout do codigo'
+
+          # 2. Configurar Java 21
+          - task: JavaToolInstaller@0
+            displayName: 'Configurar Java 21'
+            inputs:
+              versionSpec: '21'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
+
+          # 3. Compilar e executar testes
+          - task: Maven@4
+            displayName: 'Build Maven + Testes JUnit'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean verify'
+              options: '-B'
+              publishJUnitResults: false
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.21'
+              mavenVersionOption: 'Default'
+
+          # 4. Publicar resultados dos testes
+          - task: PublishTestResults@2
+            displayName: 'Publicar resultados JUnit'
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              searchFolder: '$(System.DefaultWorkingDirectory)'
+              mergeTestResults: true
+              failTaskOnFailedTests: true
+              failTaskOnMissingResultsFile: true
+              testRunTitle: 'Testes CaminhoLivre'
+
+          # 5. Copiar JAR gerado
+          - task: CopyFiles@2
+            displayName: 'Preparar artefato JAR'
+            condition: succeeded()
+            inputs:
+              SourceFolder: '$(System.DefaultWorkingDirectory)/target'
+              Contents: |
+                *.jar
+                !original-*.jar
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          # 6. Publicar artefato da pipeline
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publicar artefato CaminhoLivre'
+            condition: succeeded()
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)'
+              artifact: '$(artifactName)'
+              publishLocation: 'pipeline'
