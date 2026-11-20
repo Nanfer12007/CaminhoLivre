@@ -1,0 +1,102 @@
+# ==========================================
+# CaminhoLivre - Pipeline CD
+# Azure DevOps + Azure App Service
+# ==========================================
+
+# A CD nao inicia diretamente por commits
+trigger: none
+pr: none
+
+# Iniciar quando a pipeline CI terminar com sucesso
+resources:
+  pipelines:
+    - pipeline: caminholivreCI
+      source: 'CaminhoLivre-CI'
+      trigger:
+        branches:
+          include:
+            - main
+
+pool:
+  name: 'CaminhoLivrePool'
+
+variables:
+  artifactName: 'caminholivre-api'
+  resourceGroup: 'rg-caminholivre-556588'
+  webAppName: 'app-caminholivre-556588'
+
+  # Nome da service connection Azure
+  azureServiceConnection: 'Azure-CaminhoLivre'
+
+  # Enquanto nao houver B1, manter false
+  deployEnabled: 'false'
+
+stages:
+
+  # ETAPA 1 - Receber e validar artefato
+  - stage: PrepararRelease
+    displayName: 'Preparar release'
+
+    jobs:
+      - job: ValidarArtefato
+        displayName: 'Baixar e validar JAR'
+
+        steps:
+          - checkout: none
+
+          - download: caminholivreCI
+            artifact: '$(artifactName)'
+            displayName: 'Baixar artefato da CI'
+
+          - powershell: |
+              $pasta = "$(Pipeline.Workspace)/caminholivreCI/$(artifactName)"
+
+              Write-Host "Verificando artefatos em: $pasta"
+
+              $arquivos = @(Get-ChildItem `
+                -Path $pasta `
+                -Filter "*.jar" `
+                -File `
+                -Recurse)
+
+              if ($arquivos.Count -ne 1) {
+                throw "Esperado exatamente um JAR. Encontrados: $($arquivos.Count)"
+              }
+
+              Write-Host "Artefato validado: $($arquivos[0].Name)"
+            displayName: 'Validar arquivo JAR'
+
+  # ETAPA 2 - Deploy Azure
+  - stage: DeployAzure
+    displayName: 'Deploy no Azure App Service'
+    dependsOn: PrepararRelease
+
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['deployEnabled'], 'true')
+      )
+
+    jobs:
+      - deployment: DeployCaminhoLivre
+        displayName: 'Publicar API Java'
+
+        environment: 'caminholivre-dev'
+
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                - download: caminholivreCI
+                  artifact: '$(artifactName)'
+                  displayName: 'Baixar JAR para deploy'
+
+                - task: AzureWebApp@1
+                  displayName: 'Deploy Spring Boot'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    appType: 'webAppLinux'
+                    appName: '$(webAppName)'
+                    package: '$(Pipeline.Workspace)/caminholivreCI/$(artifactName)/*.jar'
+                    runtimeStack: 'JAVA|21-java21'
